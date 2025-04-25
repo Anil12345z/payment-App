@@ -36,7 +36,6 @@ export default function Dashboard({ token, setToken }) {
 
   // Check webcam permission and camera availability
   useEffect(() => {
-    // Check camera availability
     navigator.mediaDevices.enumerateDevices()
       .then((devices) => {
         const hasVideoInput = devices.some(device => device.kind === 'videoinput');
@@ -47,7 +46,6 @@ export default function Dashboard({ token, setToken }) {
         setHasCamera(false);
       });
 
-    // Check webcam permission
     if (navigator.permissions && navigator.permissions.query) {
       navigator.permissions
         .query({ name: 'camera' })
@@ -70,7 +68,6 @@ export default function Dashboard({ token, setToken }) {
       return;
     }
 
-    // Fetch wallet
     axios
       .get('http://localhost:4000/wallet', { headers: { Authorization: `Bearer ${storedToken}` } })
       .then((res) => {
@@ -86,7 +83,6 @@ export default function Dashboard({ token, setToken }) {
         }
       });
 
-    // Fetch QR code
     axios
       .get('http://localhost:4000/wallet/qr', { headers: { Authorization: `Bearer ${storedToken}` } })
       .then((res) => {
@@ -113,7 +109,6 @@ export default function Dashboard({ token, setToken }) {
         }
       });
 
-    // Fetch transaction history
     axios
       .get('http://localhost:4000/transactions', { headers: { Authorization: `Bearer ${storedToken}` } })
       .then((res) => {
@@ -183,22 +178,29 @@ export default function Dashboard({ token, setToken }) {
         ...prev,
       ]);
       setAmount('');
+      alert('Testing money added successfully!');
     } catch (error) {
-      setError('Failed to add testing money: ' + (error.response?.data?.error || 'Network error'));
+      const errorMsg = error.response?.data?.error || 'Network error';
+      setError('Failed to add testing money: ' + errorMsg);
+      alert('Failed to add testing money: ' + errorMsg);
     }
   };
 
   const initiateRazorpayPayment = async (type) => {
     setError('');
     if (!amount || amount <= 0 || (type === 'TRANSFER' && !upiId)) {
-      setError('Please enter a valid amount' + (type === 'TRANSFER' ? ' and UPI ID' : ''));
+      const errorMsg = 'Please enter a valid amount' + (type === 'TRANSFER' ? ' and UPI ID' : '');
+      setError(errorMsg);
+      alert(errorMsg);
+      return;
+    }
+    if (type === 'TRANSFER' && paymentMode !== 'live' && !upiId.includes('@cryptopay')) {
+      const errorMsg = 'Invalid UPI ID. Must be a CryptoPay UPI ID (e.g., user@cryptopay) for Testing or Test modes.';
+      setError(errorMsg);
+      alert(errorMsg);
       return;
     }
     if (type === 'TRANSFER') {
-      if (!upiId.includes('@cryptopay')) {
-        setError('Invalid UPI ID. Must be a CryptoPay UPI ID (e.g., user@cryptopay).');
-        return;
-      }
       if (!window.confirm(`Pay ₹${amount} to ${upiId} using ${paymentMode} mode?`)) {
         return;
       }
@@ -232,8 +234,48 @@ export default function Dashboard({ token, setToken }) {
         setAmount('');
         setUpiId('');
         setScanResult('');
+        alert('Transfer successful!');
       } catch (error) {
-        setError('Transfer failed: ' + (error.response?.data?.error || 'Network error'));
+        const errorMsg = error.response?.data?.error || 'Network error';
+        setError('Transfer failed: ' + errorMsg);
+        alert('Transfer failed: ' + errorMsg);
+      }
+      return;
+    }
+    if (paymentMode === 'live' && type === 'TRANSFER') {
+      // Handle Razorpay Real Wallet transfer
+      try {
+        await axios.post(
+          'http://localhost:4000/transfer-real',
+          {
+            amount: parseFloat(amount),
+            recipientUpiId: upiId,
+          },
+          { headers: { Authorization: `Bearer ${token || localStorage.getItem('token')}` } }
+        );
+        setWallet((prev) => ({
+          ...prev,
+          realBalance: prev.realBalance - parseFloat(amount),
+        }));
+        setTransactions((prev) => [
+          {
+            id: Date.now(),
+            amount: parseFloat(amount),
+            type: 'DEBIT',
+            status: 'COMPLETED',
+            description: `Transfer to ${upiId} via Razorpay (live)`,
+            createdAt: new Date(),
+          },
+          ...prev,
+        ]);
+        setAmount('');
+        setUpiId('');
+        setScanResult('');
+        alert('Real UPI transfer successful!');
+      } catch (error) {
+        const errorMsg = error.response?.data?.error || 'Network error';
+        setError('Real UPI transfer failed: ' + errorMsg);
+        alert('Real UPI transfer failed: ' + errorMsg);
       }
       return;
     }
@@ -290,26 +332,39 @@ export default function Dashboard({ token, setToken }) {
             setAmount('');
             setUpiId('');
             setScanResult('');
+            alert(type === 'ADD_MONEY' ? 'Money added successfully!' : 'Transfer successful!');
           } catch (error) {
-            setError('Payment verification failed: ' + (error.response?.data?.error || 'Network error'));
+            const errorMsg = error.response?.data?.error || 'Network error';
+            setError('Payment verification failed: ' + errorMsg);
+            alert('Payment verification failed: ' + errorMsg);
           }
         },
         prefill: {
           email: wallet?.user.email,
           contact: wallet?.user.phone,
+          method: 'upi', // Prefer UPI for Razorpay payments
         },
         theme: {
           color: '#007bff',
         },
+        modal: {
+          ondismiss: () => {
+            setError('Payment cancelled by user');
+            alert('Payment cancelled by user');
+          },
+        },
       };
       const rzp = new window.Razorpay(options);
+      rzp.on('payment.failed', (response) => {
+        const errorMsg = response.error.description || 'Payment failed';
+        setError('Payment failed: ' + errorMsg);
+        alert('Payment failed: ' + errorMsg);
+      });
       rzp.open();
     } catch (error) {
-      setError(
-        'Payment initiation failed: ' +
-          (error.response?.data?.error || 'Network error') +
-          (error.response?.data?.details ? ` (${error.response.data.details})` : '')
-      );
+      const errorMsg = error.response?.data?.error || 'Network error';
+      setError('Payment initiation failed: ' + errorMsg);
+      alert('Payment initiation failed: ' + errorMsg);
     }
   };
 
@@ -321,17 +376,21 @@ export default function Dashboard({ token, setToken }) {
         const urlParams = new URLSearchParams(result.split('?')[1]);
         const scannedUpiId = urlParams.get('pa');
         const scannedName = urlParams.get('pn');
-        if (scannedUpiId && scannedUpiId.includes('@cryptopay')) {
+        if (scannedUpiId) {
+          if (paymentMode !== 'live' && !scannedUpiId.includes('@cryptopay')) {
+            setError('Invalid QR code. Please scan a CryptoPay QR code for Testing or Test modes.');
+            return;
+          }
           setUpiId(scannedUpiId);
           setScanResult(`Scanned: ${scannedUpiId}${scannedName ? ` (${decodeURIComponent(scannedName)})` : ''}`);
         } else {
-          setError('Invalid QR code. Please scan a valid CryptoPay QR code.');
+          setError('Invalid QR code. No UPI ID found.');
         }
       } catch (err) {
         setError('Failed to parse QR code. Please try again.');
       }
     } else {
-      setError('Invalid QR code format. Please scan a CryptoPay QR code.');
+      setError('Invalid QR code format. Please scan a valid UPI QR code.');
     }
   };
 
@@ -344,13 +403,11 @@ export default function Dashboard({ token, setToken }) {
   const toggleScanning = () => {
     if (!isScanning) {
       if (!hasCamera) {
-        alert('Camera is not available on this device. Please use a device with a camera, such as a phone, to scan the QR code, or enter the UPI ID manually.');
+        alert('Camera is not available on this device. Please use a device with a camera or enter the UPI ID manually.');
         return;
       }
       if (webcamPermission === 'denied') {
-        setError(
-          'Webcam access is denied. Please enable camera permissions in your browser settings and refresh the page.'
-        );
+        setError('Webcam access is denied. Please enable camera permissions in your browser settings.');
         return;
       }
     }
@@ -359,9 +416,7 @@ export default function Dashboard({ token, setToken }) {
   };
 
   const copyUpiId = async () => {
-    console.log('Attempting to copy UPI ID:', userUpiId, 'Type:', typeof userUpiId);
     if (!userUpiId || typeof userUpiId !== 'string' || !userUpiId.includes('@cryptopay')) {
-      console.warn('Invalid UPI ID for copying:', userUpiId);
       setCopyStatus('Failed to copy: UPI ID not available');
       setTimeout(() => setCopyStatus(''), 2000);
       return;
@@ -371,7 +426,6 @@ export default function Dashboard({ token, setToken }) {
       setCopyStatus('UPI ID copied!');
       setTimeout(() => setCopyStatus(''), 2000);
     } catch (err) {
-      console.error('Failed to copy UPI ID:', err);
       setCopyStatus('Failed to copy UPI ID');
       setTimeout(() => setCopyStatus(''), 2000);
     }
@@ -381,7 +435,7 @@ export default function Dashboard({ token, setToken }) {
     <div>
       <header className="header">
         <div className="header-content">
-        <h1 className="logo"><Link href="/" >CryptoPay</Link></h1> 
+          <h1 className="logo"><Link href="/">CryptoPay</Link></h1>
           <nav>
             <button onClick={handleLogout} className="button">Logout</button>
           </nav>
@@ -429,7 +483,7 @@ export default function Dashboard({ token, setToken }) {
               )}
               <input
                 type="text"
-                placeholder="Recipient UPI ID (e.g., user@cryptopay)"
+                placeholder={paymentMode === 'live' ? 'Recipient UPI ID (e.g., user@upi)' : 'Recipient UPI ID (e.g., user@cryptopay)'}
                 value={upiId}
                 onChange={(e) => setUpiId(e.target.value)}
                 className="input"
@@ -448,13 +502,13 @@ export default function Dashboard({ token, setToken }) {
                   <button onClick={copyUpiId} className="button button-small" disabled={!isQrLoaded}>
                     {copyStatus.includes('copied') ? 'Copied!' : 'Copy UPI ID'}
                   </button>
-                  <p className="info-text">Share this QR code or UPI ID with other CryptoPay users to receive payments.</p>
+                  <p className="info-text">Share this QR code or UPI ID to receive payments.</p>
                 </>
               ) : (
                 <p>Loading QR code...</p>
               )}
               <h2>Send Payments</h2>
-              <p className="info-text">Scan another user’s QR code or enter their UPI ID manually to send money.</p>
+              <p className="info-text">Scan a QR code or enter a UPI ID to send money.</p>
               <button onClick={toggleScanning} className="button">
                 {isScanning ? 'Stop Scanning' : 'Start Scanning'}
               </button>
@@ -467,7 +521,7 @@ export default function Dashboard({ token, setToken }) {
                   onUserMedia={() => console.log('Webcam started')}
                   onUserMediaError={() =>
                     setError(
-                      'Webcam access denied or unavailable. Please allow camera access, ensure a webcam is connected, or enter the UPI ID manually.'
+                      'Webcam access denied or unavailable. Please allow camera access or enter the UPI ID manually.'
                     )
                   }
                   style={{ width: '100%', maxWidth: '640px', margin: '10px 0' }}
@@ -475,8 +529,7 @@ export default function Dashboard({ token, setToken }) {
               ) : (
                 webcamPermission === 'denied' && (
                   <p className="error">
-                    Webcam access is denied. Please enable camera permissions in your browser settings and refresh the
-                    page, or enter the UPI ID manually.
+                    Webcam access is denied. Please enable camera permissions or enter the UPI ID manually.
                   </p>
                 )
               )}
@@ -512,106 +565,6 @@ export default function Dashboard({ token, setToken }) {
           <p>Loading wallet...</p>
         )}
       </div>
-      {/* <style jsx>{`
-        .dashboard {
-          max-width: 1200px;
-          margin: 0 auto;
-          padding: 20px;
-        }
-        .header {
-          background-color: #007bff;
-          color: white;
-          padding: 10px 20px;
-        }
-        .header-content {
-          max-width: 1200px;
-          margin: 0 auto;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-        .logo {
-          margin: 0;
-          font-size: 1.5em;
-        }
-        .header-link {
-          color: white;
-          text-decoration: none;
-          margin-right: 20px;
-        }
-        .grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-          gap: 20px;
-        }
-        .section {
-          background: #f9f9f9;
-          padding: 20px;
-          border-radius: 8px;
-        }
-        .qr-section {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-        }
-        .input,
-        .button {
-          display: block;
-          width: 100%;
-          padding: 10px;
-          margin: 10px 0;
-          border-radius: 4px;
-        }
-        .input {
-          border: 1px solid #ccc;
-        }
-        .button {
-          background: #007bff;
-          color: white;
-          border: none;
-          cursor: pointer;
-        }
-        .button-green {
-          background: #28a745;
-        }
-        .button-small {
-          width: auto;
-          padding: 5px 10px;
-        }
-        .button:disabled {
-          background: #ccc;
-          cursor: not-allowed;
-        }
-        .error {
-          color: red;
-        }
-        .success {
-          color: green;
-        }
-        .info-text {
-          font-size: 0.9em;
-          color: #666;
-        }
-        .scan-result {
-          color: #007bff;
-          font-weight: bold;
-        }
-        .transaction-table {
-          width: 100%;
-          border-collapse: collapse;
-          margin-top: 10px;
-        }
-        .transaction-table th,
-        .transaction-table td {
-          border: 1px solid #ddd;
-          padding: 8px;
-          text-align: left;
-        }
-        .transaction-table th {
-          background: #007bff;
-          color: white;
-        }
-      `}</style> */}
     </div>
   );
 }
