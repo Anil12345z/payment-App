@@ -31,7 +31,7 @@ crypto-app/
 │   └── package.json
 ├── frontend/
 │   ├── pages/
-│   │   └── Dashboard.js
+│   │   └── Dashboard.js , login.js , index.js
 │   └── package.json
 ├── .gitignore
 └── README.md
