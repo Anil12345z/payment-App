@@ -1,4 +1,5 @@
-CryptoPay
+#CryptoPay
+
 CryptoPay is a UPI-based payment application with support for three wallet types: Testing Wallet, Razorpay Test Wallet, and Razorpay Real Wallet. Users can add money, transfer funds via QR codes or UPI IDs, and view transaction history. The application is built with a Node.js backend (Express, Prisma, MySQL) and a Next.js frontend (React).
 
 #Features
@@ -21,7 +22,7 @@ MySQL: Running on localhost:3306 with a database named auth_demo.
 Razorpay Account: Test and live API keys for payment integration.
 Git: For version control.
 
-Project Structure
+#Project Structure
 crypto-app/
 ├── backend/
 │   ├── prisma/
