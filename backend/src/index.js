@@ -13,7 +13,7 @@ const prisma = new PrismaClient();
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your_secure_jwt_secret';
 
-// Initialize Razorpay instances for test and live modes
+// Initialize Razorpay instances
 const razorpayInstances = {
   test: new Razorpay({
     key_id: process.env.RAZORPAY_TEST_KEY_ID,
@@ -42,9 +42,14 @@ const authenticate = (req, res, next) => {
   }
 };
 
-// Sanitize input to prevent injection
+// Sanitize input
 const sanitizeInput = (input) => {
   return input.replace(/[<>{}]/g, '');
+};
+
+// Validate UPI ID
+const validateUpiId = (upiId) => {
+  return /^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+$/.test(upiId);
 };
 
 // User Signup
@@ -101,7 +106,7 @@ app.post('/login', async (req, res) => {
   }
 });
 
-// Add Money to Testing Wallet (No Razorpay)
+// Add Money to Testing Wallet
 app.post('/add-testing-money', authenticate, async (req, res) => {
   const { amount } = req.body;
   if (!amount || amount <= 0) return res.status(400).json({ error: 'Invalid amount' });
@@ -132,7 +137,9 @@ app.post('/add-testing-money', authenticate, async (req, res) => {
 app.post('/transfer-testing', authenticate, async (req, res) => {
   const { amount, recipientUpiId } = req.body;
   if (!amount || amount <= 0) return res.status(400).json({ error: 'Invalid amount' });
-  if (!recipientUpiId) return res.status(400).json({ error: 'Recipient UPI ID required' });
+  if (!recipientUpiId || !recipientUpiId.includes('@cryptopay')) {
+    return res.status(400).json({ error: 'Invalid CryptoPay UPI ID' });
+  }
   const sanitizedUpiId = sanitizeInput(recipientUpiId);
   try {
     const recipient = await prisma.user.findUnique({ where: { upiId: sanitizedUpiId } });
@@ -174,6 +181,90 @@ app.post('/transfer-testing', authenticate, async (req, res) => {
   }
 });
 
+// Transfer Money from Razorpay Real Wallet (Live UPI)
+app.post('/transfer-real', authenticate, async (req, res) => {
+  const { amount, recipientUpiId } = req.body;
+  if (!amount || amount <= 0) return res.status(400).json({ error: 'Invalid amount' });
+  if (!recipientUpiId || !validateUpiId(recipientUpiId)) {
+    return res.status(400).json({ error: 'Invalid UPI ID format' });
+  }
+  const sanitizedUpiId = sanitizeInput(recipientUpiId);
+  try {
+    const senderWallet = await prisma.wallet.findUnique({ where: { userId: req.userId } });
+    if (senderWallet.realBalance < amount) return res.status(400).json({ error: 'Insufficient balance' });
+
+    const razorpay = razorpayInstances.live;
+    if (!razorpay) {
+      throw new Error('Razorpay live credentials not configured');
+    }
+
+    // Check if recipient is internal (@cryptopay)
+    const recipient = await prisma.user.findUnique({ where: { upiId: sanitizedUpiId } });
+    if (recipient) {
+      // Internal transfer: update database directly
+      await prisma.$transaction([
+        prisma.wallet.update({
+          where: { userId: req.userId },
+          data: { realBalance: { decrement: amount } },
+        }),
+        prisma.wallet.update({
+          where: { userId: recipient.id },
+          data: { realBalance: { increment: amount } },
+        }),
+        prisma.transaction.create({
+          data: {
+            amount,
+            type: 'DEBIT',
+            status: 'COMPLETED',
+            wallet: { connect: { userId: req.userId } },
+            description: `Transfer to ${sanitizedUpiId} via Razorpay (live)`,
+          },
+        }),
+        prisma.transaction.create({
+          data: {
+            amount,
+            type: 'CREDIT',
+            status: 'COMPLETED',
+            wallet: { connect: { userId: recipient.id } },
+            description: `Received from user ${req.userId} via Razorpay (live)`,
+          },
+        }),
+      ]);
+    } else {
+      // External UPI transfer: use Razorpay live API
+      const payment = await razorpay.payments.create({
+        amount: Math.round(amount * 100), // Convert to paise
+        currency: 'INR',
+        method: 'upi',
+        vpa: sanitizedUpiId,
+      });
+      if (payment.status !== 'captured') {
+        throw new Error('Payment not captured');
+      }
+      await prisma.$transaction([
+        prisma.wallet.update({
+          where: { userId: req.userId },
+          data: { realBalance: { decrement: amount } },
+        }),
+        prisma.transaction.create({
+          data: {
+            amount,
+            type: 'DEBIT',
+            status: 'COMPLETED',
+            wallet: { connect: { userId: req.userId } },
+            description: `Transfer to ${sanitizedUpiId} via Razorpay (live)`,
+            razorpayPaymentId: payment.id,
+          },
+        }),
+      ]);
+    }
+    res.json({ message: 'Real UPI transfer successful' });
+  } catch (error) {
+    console.error('Real UPI transfer error:', error);
+    res.status(500).json({ error: 'Real UPI transfer failed', details: error.message });
+  }
+});
+
 // Create Razorpay Order
 app.post('/create-order', authenticate, async (req, res) => {
   const { amount, type, mode } = req.body;
@@ -188,6 +279,8 @@ app.post('/create-order', authenticate, async (req, res) => {
       amount: Math.round(amount * 100),
       currency: 'INR',
       receipt: `receipt_${crypto.randomBytes(8).toString('hex')}`,
+      payment_capture: 1, // Auto-capture payment
+      notes: { type, mode },
     });
     res.json({
       orderId: order.id,
@@ -197,7 +290,7 @@ app.post('/create-order', authenticate, async (req, res) => {
       mode,
     });
   } catch (error) {
-    console.error('Create order error:', error.message, error);
+    console.error('Create order error:', error);
     res.status(500).json({ error: 'Failed to create order', details: error.message });
   }
 });
@@ -215,8 +308,8 @@ app.post('/verify-payment', authenticate, async (req, res) => {
     return res.status(400).json({ error: 'Invalid payment signature' });
   }
   try {
+    const balanceField = mode === 'test' ? 'testBalance' : 'realBalance';
     if (type === 'ADD_MONEY') {
-      const balanceField = mode === 'test' ? 'testBalance' : 'realBalance';
       await prisma.$transaction([
         prisma.transaction.create({
           data: {
@@ -239,7 +332,6 @@ app.post('/verify-payment', authenticate, async (req, res) => {
       const recipient = await prisma.user.findUnique({ where: { upiId: sanitizedUpiId } });
       if (!recipient) return res.status(404).json({ error: 'Recipient not found' });
       const senderWallet = await prisma.wallet.findUnique({ where: { userId: req.userId } });
-      const balanceField = mode === 'test' ? 'testBalance' : 'realBalance';
       if (senderWallet[balanceField] < amount) return res.status(400).json({ error: 'Insufficient balance' });
       await prisma.$transaction([
         prisma.wallet.update({
@@ -313,7 +405,7 @@ app.post('/pay-merchant', authenticate, async (req, res) => {
       prisma.wallet.update({
         where: { userId: req.userId },
         data: { [balanceField]: { decrement: amount } },
-      }),
+        }),
       prisma.wallet.update({
         where: { userId: merchant.userId },
         data: { [balanceField]: { increment: amount } },
