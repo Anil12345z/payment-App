@@ -8,7 +8,9 @@ const cors = require('cors');
 const crypto = require('crypto');
 const Razorpay = require('razorpay');
 const nodemailer = require('nodemailer');
-const WEBSITE_URL = process.env.WebsiteUrl || 'http://localhost:3001';
+
+// Normalize WebsiteUrl by removing trailing slash
+const WEBSITE_URL = (process.env.WebsiteUrl || 'http://localhost:3001').replace(/\/+$/, '');
 
 const app = express();
 const prisma = new PrismaClient();
@@ -35,11 +37,26 @@ const emailTransporter = nodemailer.createTransport({
   },
 });
 
+// CORS configuration with a whitelist
+const allowedOrigins = [WEBSITE_URL];
+
 app.use(cors({
-  origin: WEBSITE_URL, // Allow requests from the website URL
-  methods: ['GET', 'POST'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  origin: (origin, callback) => {
+    // Allow requests with no origin (e.g., mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+
+    // Check if the origin is in the whitelist
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    // If origin is not allowed, return an error
+    return callback(new Error('Not allowed by CORS'));
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
 app.use(express.json());
 
 // Middleware to verify JWT
@@ -419,7 +436,7 @@ app.post('/pay-merchant', authenticate, async (req, res) => {
       prisma.wallet.update({
         where: { userId: req.userId },
         data: { [balanceField]: { decrement: amount } },
-        }),
+      }),
       prisma.wallet.update({
         where: { userId: merchant.userId },
         data: { [balanceField]: { increment: amount } },
@@ -507,7 +524,6 @@ app.post('/contact', async (req, res) => {
     return res.status(400).json({ error: 'Invalid email address.' });
   }
 
- 
   const capitalizedName = name.charAt(0).toUpperCase() + name.slice(1);
   const safeName = sanitizeInput(capitalizedName);
   const safeEmail = sanitizeInput(email);
@@ -702,7 +718,7 @@ app.post('/contact', async (req, res) => {
                   <td style="background: #f5f5f5; border-bottom-left-radius: 15px; border-bottom-right-radius: 15px; text-align: center; padding: 20px;">
                     <p style="font-size: 14px; color: #666; margin: 0;">
                       Sent from <a href="${WEBSITE_URL}" style="color: #5e2ced; text-decoration: none;">CryptoPay</a> | 
-                      <a href="${WEBSITE_URL}/Contact" style="color: #5e2ced; text-decoration: none;">Contact Us</a>
+                      <a href="${WEBSITE_URL}/contact" style="color: #5e2ced; text-decoration: none;">Contact Us</a>
                     </p>
                   </td>
                 </tr>
@@ -724,6 +740,5 @@ app.post('/contact', async (req, res) => {
     return res.status(500).json({ error: 'Failed to send email.', details: error.message });
   }
 });
-
 
 app.listen(4000, () => console.log('Server running on port 4000'));
