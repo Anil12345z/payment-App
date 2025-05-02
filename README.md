@@ -51,8 +51,8 @@ Ensure MySQL is running:mysql -u root -p
 Create a database:CREATE DATABASE auth_demo;
 
 
-Create a MySQL user (e.g., test11 with password ax12347):CREATE USER 'test11'@'localhost' IDENTIFIED BY 'ax12347';
-GRANT ALL PRIVILEGES ON auth_demo.* TO 'test11'@'localhost';
+Create a MySQL user (e.g., test1rer1 with password ax1erwer2347):CREATE USER 'test1rer1'@'localhost' IDENTIFIED BY 'ax1erwer2347';
+GRANT ALL PRIVILEGES ON auth_demo.* TO 'tetest1rer1st11'@'localhost';
 FLUSH PRIVILEGES;
 EXIT;
 
@@ -64,12 +64,20 @@ Create a .env file in backend/:cd backend
 touch .env
 
 
-Add the following to backend/.env:DATABASE_URL="mysql://Username:Password@Host:Port/Database"
+Add the following to backend/.env:
+
+DATABASE_URL="mysql://Username:Password@Host:Port/Database"
 JWT_SECRET=your_secure_jwt_secret
 RAZORPAY_TEST_KEY_ID=rzp_test_xxxxxxxxxxxxxx
 RAZORPAY_TEST_KEY_SECRET=xxxxxxxxxxxxxxxxxxxx
 RAZORPAY_LIVE_KEY_ID=rzp_live_xxxxxxxxxxxxxx
 RAZORPAY_LIVE_KEY_SECRET=xxxxxxxxxxxxxxxxxxxx
+EMAIL_USER=xxxxxxxxxxxxxxxxxxxx
+EMAIL_PASS=xxxxxxxxxxxxxxxxxxxx
+WebsiteUrl=http://localhost:3001/
+
+
+WebsiteUrl=http://localhost:3001/
 
 
 Replace your_secure_jwt_secret with a strong secret (e.g., generate using openssl rand -hex 32).
