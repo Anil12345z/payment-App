@@ -8,6 +8,7 @@ Three Wallet Types:
 Testing Wallet: Add and transfer money without Razorpay for testing.
 Razorpay Test Wallet: Uses Razorpay test mode for payments.
 Razorpay Real Wallet: Uses Razorpay live mode for real transactions.
+contact mail confirmation to admin and the customer.
 
 
 QR Code Payments: Generate and scan QR codes for transfers.
